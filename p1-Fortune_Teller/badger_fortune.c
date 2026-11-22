@@ -1,290 +1,281 @@
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
+#include <stdlib.h>
+#include <sys/stat.h>
+#include <assert.h>
 
-int main(int argc, char **argv)
-{
-        char usageError[200] = "USAGE: \n\tbadger-fortune -f <file> -n <number> (optionally: -o <output file>) \n\t\t OR \n\tbadger-fortune -f <file> -b <batch file> (optionally: -o <output file>)\n";
-        char flagTypeError[30] = "ERROR: Invalid Flag Types\n";
-        char doubleUsageError1[100] = "ERROR: You can't specify a specific fortune number in conjunction with batch mode\n";
-        char doubleUsageError2[100] = "ERROR: You can't use batch mode when specifying a fortune number using -n\n";
 
-        // check if argc < 5
-        if (argc < 5)
-        {
-                fprintf(stdout, "%s", usageError);
-                exit(1);
-        }
+#define WRITE_BUFFER_SIZE 1024
 
-        // check if flags are correct
+typedef struct{
+	int index;
+	char write_buffer[WRITE_BUFFER_SIZE];
+}stdout_writer;
 
-        int fFlag = 0;
-        int fNum = 0;
-        int nFlag = 0;
-        int nNum = 0;
-        int bFlag = 0;
-        int bNum = 0;
-        int oFlag = 0;
-        int oNum = 0;
+void write_to_output(stdout_writer *std_writer, char byte);
+void flush_writer(stdout_writer *std_writer);
+void read_file_number(FILE *file, char *buf, int buf_size, int fortune_to_read);
 
-        for (int i = 1; i < argc; i++)
-        {
-                if (strcmp(argv[i], "-f") == 0)
-                {
-                        fNum = i;
-                        fFlag = 1;
-                }
-                else if (strcmp(argv[i], "-n") == 0)
-                {
-                        if (bFlag == 1)
-                        {
-                                fprintf(stdout, "%s", doubleUsageError1);
-                                exit(1);
-                        }
-                        nNum = i;
-                        nFlag = 1;
-                }
-                else if (strcmp(argv[i], "-b") == 0)
-                {
-                        if (nFlag == 1)
-                        {
-                                fprintf(stdout, "%s", doubleUsageError2);
-                                exit(1);
-                        }
-                        bNum = i;
-                        bFlag = 1;
-                }
-                else if (strcmp(argv[i], "-o") == 0)
-                {
-                        oNum = i;
-                        oFlag = 1;
-                }
-        }
 
-        if (nFlag == 0 && bFlag == 0)
-        {
-                fprintf(stdout, "%s", flagTypeError);
-                exit(1);
-        }
+char *file_name, *batch_name;
+int number_passed;
 
-        if (nFlag == 1 && fFlag == 0 && bFlag == 0 && oFlag == 0)
-        {
-                fprintf(stdout, "%s", flagTypeError);
-                exit(1);
-        }
+typedef enum{
+	FILE_FLAG,
+	BATCH_FLAG,
+	NUMBER_FLAG,
+	FLAGS_ENUM_SIZE,
+	UNKNOWN_FLAG
 
-        if (fFlag == 0 && (nFlag == 1 || bFlag == 1))
-        {
-                fprintf(stdout, "%s", "ERROR: No fortune file was provided\n");
-                exit(1);
-        }
+}flag;
 
-        // open the file and check if successfully opened
 
-        FILE *fp = fopen(argv[fNum + 1], "r");
-        if (fp == NULL)
-        {
-                fprintf(stdout, "%s", "ERROR: Can't open fortune file\n");
-                exit(1);
-        }
+const char *flag_arr[FLAGS_ENUM_SIZE] = {"-f", "-b", "-n"};
 
-        // store the number of fortunes and the max length of the fortune
-        int num[2];
-        size_t size;
-        char *buf = NULL;
-        int i = 0;
-        int fortuneCounter = 0;
+flag check_flag(char *value);
+int flag_filler(flag flag_type, char *flag_value);
+int parse_flags(char *argv[]);
 
-        while (i < 2)
-        {
-                if (getline(&buf, &size, fp) == EOF)
-                {
-                        break;
-                }
-                num[i] = atoi(buf);
-                i++;
-                fortuneCounter++;
-        }
-        if (fortuneCounter == 0)
-        {
-                fprintf(stdout, "%s", "ERROR: Fortune File Empty\n");
-                exit(1);
-        }
+int main(int argc, char *argv[]){
 
-        // allocate space for a 2D array
-        char **fortune = malloc(sizeof(char *) * num[0]);
-        if (fortune == NULL)
-        {
-                printf("array not allocated");
-                exit(1);
-        }
-        for (int i = 0; i < num[0]; i++)
-        {
-                fortune[i] = (char *)malloc(sizeof(char) * num[1]);
-                if (fortune[i] == NULL)
-                {
-                        printf("array not allocated");
-                        return 1;
-                }
-        }
+	if (argc!=5){
+		printf("Invalid number of arguments\n");
+		return 1;
+	}
 
-        char *delim = "%\n";
-        int numFortune = 0;
-        int counter = 0;
-        while (getline(&buf, &size, fp) != EOF)
-        {
-                if (counter < 1)
-                { // skip the first line
-                        counter++;
-                        continue;
-                }
-                if (strcmp(buf, delim) == 0)
-                {
-                        numFortune++;
-                        continue;
-                }
-                strcat(fortune[numFortune], buf);
-        }
 
-        // number mode
-        int fortuneIndex = 0;
-        if (nFlag == 1 && argc == 5)
-        {
-                fortuneIndex = atoi(argv[nNum + 1]); // parse the index
-                if (fortuneIndex < 0 || fortuneIndex > num[0])
-                {
-                        fprintf(stdout, "%s", "ERROR: Invalid Fortune Number\n");
-                        exit(1);
-                }
-                printf("%s", fortune[fortuneIndex - 1]);
-        }
-        // batch mode
-        else if (bFlag == 1 && argc == 5)
-        {
-                // open the batch file and check if successfully opened
-                FILE *fp = fopen(argv[bNum + 1], "r");
-                if (fp == NULL)
-                {
-                        fprintf(stdout, "%s", "ERROR: Can't open batch file\n");
-                        exit(1);
-                }
+	if (parse_flags(argv)==1){
+		return 1;
+	}
 
-                int batchCounter = 0;
-                while (getline(&buf, &size, fp) != EOF)
-                {
-                        fortuneIndex = atoi(buf);
-                        if (fortuneIndex < 0 || fortuneIndex > num[0])
-                        {
-                                fprintf(stdout, "%s", "ERROR: Invalid Fortune Number\n\n");
-                                continue;
-                        }
-                        if (strcmp(&buf[strlen(buf) - 1], "\n") == 0)
-                        { // check if last line
-                                printf("%s\n\n", fortune[fortuneIndex - 1]);
-                        }
-                        else
-                        {
-                                int len = strlen(fortune[fortuneIndex - 1]);
-                                fortune[fortuneIndex - 1][len - 2] = '\0';
-                                printf("%s", fortune[fortuneIndex - 1]);
-                        }
-                        batchCounter++;
-                }
-                // check if the batch file is empty
-                if (batchCounter == 0)
-                {
-                        fprintf(stdout, "%s", "ERROR: Batch File Empty\n");
-                        exit(1);
-                }
 
-                if (fclose(fp) != 0)
-                {
-                        printf("Error while closing the file.\n");
-                        exit(1);
-                }
-        }
 
-        else if (argc > 5)
-        {
-                // output mode
-                if (oFlag == 1)
-                {
-                        FILE *newFile = fopen(argv[oNum + 1], "w");
-                        if (newFile == NULL)
-                        {
-                                printf("cannot open file\n");
-                                return 1;
-                        }
-                        // number mode
-                        if (nFlag == 1)
-                        {
-                                fortuneIndex = atoi(argv[nNum + 1]);
-                                fputs(fortune[fortuneIndex - 1], newFile);
-                                if (fclose(newFile) != 0)
-                                {
-                                        printf("Error while closing the file.\n");
-                                        exit(0);
-                                }
-                        }
+	printf("fileName: %s \n", file_name);
+	printf("batch_name: %s \n", batch_name);
+	printf("number: %d \n", number_passed);
 
-                        // batch mode
-                        else if (bFlag == 1)
-                        {
-                                FILE *fp = fopen(argv[bNum + 1], "r");
-                                if (fp == NULL)
-                                {
-                                        printf("cannot open file\n");
-                                        return 1;
-                                }
-                                int batchCounter = 0;
-                                while (getline(&buf, &size, fp) != EOF)
-                                {
-                                        fortuneIndex = atoi(buf);
-                                        if (fortuneIndex <= 0 || fortuneIndex > num[0])
-                                        {
-                                                fputs("ERROR: Invalid Fortune Number\n\n", newFile);
-                                                continue;
-                                        }
 
-                                        if (strcmp(&buf[strlen(buf) - 1], "\n") == 0)
-                                        { // check if last line
-                                                fputs(fortune[fortuneIndex - 1], newFile);
-                                                fputs("\n\n", newFile);
-                                        }
+        FILE *file = fopen(file_name, "r");
 
-                                        else
-                                        {
-                                                fputs(fortune[fortuneIndex - 1], newFile);
-                                        }
-                                        batchCounter++;
-                                }
-                                // check if the batch file is empty
-                                if (batchCounter == 0)
-                                {
-                                        fprintf(stdout, "%s", "ERROR: Batch File Empty\n");
-                                        exit(1);
-                                }
+	if (file==NULL){
+		printf("file not opsible to open, check spelling \n");
+		return 1;
+	}
 
-                                if (fclose(newFile) != 0)
-                                {
-                                        printf("Error while closing the file.\n");
-                                        exit(0);
-                                }
-                        }
-                }
-        }
+	//asumimso que el file esta bien y sus dos primeros valores son como indican. 
+	//<valor de cuantos fortunes hay>
+	//<maxSize pero este no lo vamos a usar yo creo>
+	
+	int fortunes_count;
+	int fortunes_max_size;
+	if (fscanf(file, "%d", &fortunes_count)!=1){
+		printf("scanning of the file not posible \n");
+		return 1;
+	};
 
-        if (fclose(fp) != 0)
-        {
-                printf("Error while closing the file.\n");
-                exit(1);
-        }
+	if (fscanf(file, "%d", &fortunes_max_size)!=1){
+		printf("scanning of the file not posible \n");
+		return 1;
+	};
 
-        
-        for (int i = 0; i < num[0]; i++)
-        {
-                free(fortune[i]);
-        }
-        free(fortune);
-        free(buf);
+
+	if(number_passed > fortunes_count){
+		printf("number passed is bigger than fortune count \n");
+		return 1;
+	}
+	printf("fortunes count: %d \n", fortunes_count);
+	printf("max fortuen size: %d \n \n", fortunes_max_size);
+
+
+
+	char *buffer= malloc(sizeof(char) * fortunes_max_size);
+	if (buffer==NULL){
+		return 1;
+	}
+	//A APRTIR DE ACA, nada de dynamic memory allocation
+	
+
+
+
+
+
+	if (number_passed>0){
+
+		read_file_number(file,  buffer, fortunes_max_size, number_passed);
+		//read by number logi
+	}else{
+		// prepare to read the file
+	}
+
+	free(buffer);
+	fclose(file);
+	return 0;
+}
+
+int parse_flags(char *argv[]){
+
+
+	flag flag_1 = check_flag(argv[1]);
+	flag flag_2 = check_flag(argv[3]);
+
+	if (flag_1 == UNKNOWN_FLAG || flag_2 == UNKNOWN_FLAG){
+		printf("invalid flags passed \n");
+		return 1;
+	}
+
+	if (flag_2 == flag_1){
+		printf("error same flags provided \n");
+		return 1;
+	}
+
+
+
+	if (flag_filler(flag_1, argv[2]) ==1 ||  flag_filler(flag_2, argv[4]) ==1 ) {
+		printf("flag filler failed \n");
+		return 1;
+
+	}
+
+
+	return 0;
+
+}
+
+flag check_flag(char *value){
+	for (int i=0; i<FLAGS_ENUM_SIZE+1; i++) {
+		if (strcmp(flag_arr[i], value)==0) {
+			return i;
+		
+		}
+	
+	}
+
+	return UNKNOWN_FLAG;
+}
+
+
+
+int flag_filler(flag flag_type, char *flag_value){
+
+	if (flag_value==NULL){
+		printf("flag_value is NULL \n");
+		return 1;
+	}
+
+	switch (flag_type) {
+		case FILE_FLAG:
+			if (file_name!=NULL){
+				printf("ASSERTION - file name, already passed \n");
+				return 1;
+			}
+
+			file_name = flag_value;
+			break;
+
+		case BATCH_FLAG:
+			if (batch_name!=NULL){
+				printf("ASSERTION - batch name, already passed \n");
+				return 1;
+			}
+
+			if (number_passed>0){
+				printf("Already using -n flag, you can not use the -b flag at the same time \n");
+				return 1;
+			}
+
+			batch_name = flag_value;
+			break;
+
+		case NUMBER_FLAG:
+			if (number_passed!=0){
+				printf("ASSERTION - numer should be always cero here, its %d  \n", number_passed);
+				return 1;
+			}
+			if (batch_name!=NULL){
+				printf("Already using -b flag, you can NOT use the -n flag at the same time \n");
+			}
+			
+			number_passed = atoi(flag_value);
+
+			if (number_passed<=0){
+				printf("invalid number, should be greater than cero \n");
+				return 1;
+			}
+			break;
+
+		default:
+
+			printf("this is an assertoin, this should never reach this function");
+			return 1;
+	
+	}
+
+
+	return 0;
+
+
+}
+
+
+
+
+
+void read_file_number(FILE *file, char *buf, int buf_size, int fortune_to_read){
+
+	int percentage_counter=0;
+	size_t read_bytes;
+	stdout_writer std_writer = {.index = 0, .write_buffer = {0}};
+
+
+	while ((read_bytes = fread(buf, sizeof(char), buf_size, file))> 0 ) {
+		
+
+		if (percentage_counter>fortune_to_read){
+			flush_writer(&std_writer);
+			return;
+		}
+		//recorremos el buffer 
+		for (int i=0; i<read_bytes; i++){
+			if (buf[i]=='%'){
+				percentage_counter++;
+			}
+
+			if (percentage_counter>fortune_to_read){
+				flush_writer(&std_writer);
+				return;
+			}
+
+
+
+			if (percentage_counter==fortune_to_read){
+				write_to_output(&std_writer, buf[i]);
+			}
+
+
+
+		}
+
+	
+	}
+}
+
+
+void write_to_output(stdout_writer *std_writer, char byte){
+	assert(std_writer->index < WRITE_BUFFER_SIZE-1);
+	assert(std_writer->index >=0);
+
+	if (std_writer->index == WRITE_BUFFER_SIZE){
+		flush_writer(std_writer);
+	}
+
+
+	std_writer->write_buffer[std_writer->index] = byte;
+	std_writer->index++;
+
+}
+
+void flush_writer(stdout_writer *std_writer){
+	fwrite(std_writer->write_buffer, sizeof(char), (std_writer->index), stdout);
+	fflush(stdout);
+	std_writer->index=0;
 }
