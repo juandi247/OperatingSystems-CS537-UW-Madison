@@ -16,6 +16,11 @@ void write_to_output(stdout_writer *std_writer, char byte);
 void flush_writer(stdout_writer *std_writer);
 void read_file_number(FILE *file, char *buf, int buf_size, int fortune_to_read);
 
+//---- batch parte
+void fill_fortunes_index_from_source(FILE *file, char *read_buf, int read_buf_size, int *fortunes_index_buf, int fortunes_index_buf_size, int total_file_size);
+void read_batch_file(char *buf, int buf_size, FILE *fortune_file, int *fortunes_index_buf, int fortunes_index_buf_size, int file_size);
+void write_to_output_batch(char *write_buffer, int write_buffer_size, FILE *fortune_file, int small_limit, int big_limit);
+int big_limit_noninclusive(int small_limit, int *fortunes_index_buf, int fortunes_index_buf_size, int file_size);
 
 char *file_name, *batch_name;
 int number_passed;
@@ -61,6 +66,13 @@ int main(int argc, char *argv[]){
 		printf("file not opsible to open, check spelling \n");
 		return 1;
 	}
+	int stat(const char *restrict path, struct stat *restrict buf);
+
+
+	struct stat stat_struct;
+	stat(file_name, &stat_struct);
+
+
 
 	//asumimso que el file esta bien y sus dos primeros valores son como indican. 
 	//<valor de cuantos fortunes hay>
@@ -100,10 +112,49 @@ int main(int argc, char *argv[]){
 
 
 	if (number_passed>0){
-
 		read_file_number(file,  buffer, fortunes_max_size, number_passed);
 		//read by number logi
 	}else{
+		int *percentage_indexes_buffer= malloc(sizeof(int) * fortunes_count);
+
+
+		struct stat batch_stat_struct;
+		stat(batch_name, &batch_stat_struct);
+
+		if ((int)batch_stat_struct.st_size <=0){
+			printf("error, file batch empty");
+			return 1; 
+		}
+		printf("size de batch: %zu \n", batch_stat_struct.st_size);
+
+ 		fill_fortunes_index_from_source(file, buffer, fortunes_max_size, percentage_indexes_buffer, fortunes_count, (int)stat_struct.st_size);
+		read_batch_file(buffer, fortunes_max_size, file, percentage_indexes_buffer, fortunes_count, (int)stat_struct.st_size);
+
+
+		/* Leer el archivo, determinar si hay algun valor que no coincide. el check del size queda en todo.  
+		 *Leo el archivo y puedo tomar
+
+3. Como lo podriamos hacer con static memory allocation. 
+
+- Recibimos el file
+- leemos el file  de source para guardar en un array acorde al index y el %, cada starting point de cada fortune 
+- guardamos eso en el array que creamos dinamicamente. Lo creamos sin ningun realloc ni nada, proqeu sabemos cuantos cosos hay
+- por cada numero del batch, vamos leyendo. Podriamos leerlo tambien en un buffer. 
+
+- Leemos ese buffer con los bytes creados 
+- por cada numero que leemos. 
+
+
+POdriamos hacer un fscan para probar, pero seria mas costoso. 
+
+- 
+
+
+
+
+		 * hago un ordenamiento del array, y voy imprimiendo. POrque? porque si no lo rodeno debo subir y bajar y asi. ordenarlo es mas simple
+		 * */
+
 		// prepare to read the file
 	}
 
@@ -223,7 +274,7 @@ int flag_filler(flag flag_type, char *flag_value){
 void read_file_number(FILE *file, char *buf, int buf_size, int fortune_to_read){
 
 	int percentage_counter=0;
-	size_t read_bytes;
+	int read_bytes;
 	stdout_writer std_writer = {.index = 0, .write_buffer = {0}};
 
 
@@ -279,3 +330,144 @@ void flush_writer(stdout_writer *std_writer){
 	fflush(stdout);
 	std_writer->index=0;
 }
+
+
+
+
+
+//---cosas de batch
+
+
+void fill_fortunes_index_from_source(FILE *file, char *read_buf, int read_buf_size, int *fortunes_index_buf, int fortunes_index_buf_size, int total_file_size){
+
+	int bytes_read;
+	int curr_fortune_index = 0;
+       	int file_byte_index=0;
+
+	// int posiblePercentage=0;
+
+	int se = fseek(file, 0, SEEK_SET);
+
+	char percentage_pattern[3]="\n%\n";
+	int checkIndex=0;
+
+
+
+
+
+
+	/*                           -
+	 *  [ A, A, \n, %, A, \n, \n, %, \n]      
+	 *
+	 *  checkIndex=0;
+	 *
+	 *
+	 *
+	 *
+	 * */
+	printf("seek starts en: %d \n", se);
+	while ((bytes_read = fread(read_buf, sizeof(char), read_buf_size, file)) > 0 ) {
+		for (int i=0; i<bytes_read; i++) {
+
+			if (read_buf[i] == percentage_pattern[checkIndex]){
+				checkIndex++;
+			}else{
+				checkIndex=0;
+				//weird edge case cuando tenemos por ejmeplo
+	 			// *  [ \n, \n, %, \n]      
+				if (read_buf[i] == percentage_pattern[checkIndex]){
+					checkIndex++;
+				}
+			}
+
+			if (checkIndex==3){
+				fortunes_index_buf[curr_fortune_index] = file_byte_index;
+				curr_fortune_index++;
+			}
+
+       			file_byte_index++;
+
+		}
+
+
+
+
+	}
+
+	assert(file_byte_index==total_file_size);
+	assert(curr_fortune_index == fortunes_index_buf_size);
+
+}
+
+
+
+
+
+void read_batch_file(char *buf, int buf_size, FILE *fortune_file, int *fortunes_index_buf, int fortunes_index_buf_size, int file_size){
+	assert(batch_name!=NULL);
+
+        FILE *file = fopen(batch_name, "r");
+
+	int number;
+
+	while (fscanf(file, "%d", &number)> 0 ) {
+		if (number>fortunes_index_buf_size || number<1){
+			printf("Invalid number on batch: %d \n", number);
+			return ;
+		}
+		//becasue our index on teh batch file starts at 1
+		number--;
+
+		printf("\n------------- Imprimiendo el fortunes: #%d---------\n", number+1);
+		int big_limit = big_limit_noninclusive(number, fortunes_index_buf, fortunes_index_buf_size, file_size);
+								//small limit   ------------ big limit
+ 		write_to_output_batch(buf, buf_size, fortune_file, fortunes_index_buf[number], big_limit);
+		printf("\n\n");
+	}
+
+}
+
+
+//returns the BYTE of the big limit of the file. (not an index)
+int big_limit_noninclusive(int small_limit_index, int *fortunes_index_buf, int fortunes_index_buf_size, int file_size){
+
+	assert(small_limit_index>=0);
+	assert(small_limit_index <=fortunes_index_buf_size);
+
+	if (small_limit_index == fortunes_index_buf_size-1){
+		return file_size;
+	}
+
+	//overflow not posible because we already checked the biggest one previously and sizes
+	return fortunes_index_buf[small_limit_index+1]-1;
+}
+
+
+
+
+//write buffer size es el size del length de la fortune mas grande, por lo tanto si o si deberia caber todo en ese buffer ya allocado
+void write_to_output_batch(char *write_buffer, int write_buffer_size, FILE *fortune_file, int small_limit, int big_limit){
+
+	int total_bytes_to_write = big_limit - small_limit;
+	int bytes_writen = 0;
+
+
+	fseek(fortune_file, small_limit, SEEK_SET);
+
+	while (bytes_writen < total_bytes_to_write) {
+		int bytes_read;
+		// verificar si podemos escribir todo de una vez, o toca llenar el buffer completo y continuar
+		if (total_bytes_to_write > write_buffer_size){
+	 		bytes_read = fread(write_buffer, sizeof(char), write_buffer_size, fortune_file);
+		}else{
+	 		bytes_read = fread(write_buffer, sizeof(char), total_bytes_to_write, fortune_file);
+		}
+		bytes_writen+=bytes_read;
+		//flush the output. 
+		fwrite(write_buffer, sizeof(char), bytes_read, stdout);
+		fflush(stdout);
+	}
+}
+
+
+
